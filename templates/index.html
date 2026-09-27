@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IoT Time-Series Monitoring System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="is-loading" data-mode="{{ 'demo' if demo else 'sqlite' }}">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div>
+        <h1>IoT Time-Series Monitoring System</h1>
+        <p class="subtitle">Simulated sensors &middot; {% if demo %}Serverless demo data (Vercel){% else %}SQLite time-series database{% endif %} &middot; Flask REST API</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="online" class="online"><span class="dot"></span><span id="online-text">Connecting&hellip;</span></span>
+      <span id="clock" class="clock"></span>
+      <button id="pause" type="button" class="btn btn-ghost">Pause refresh</button>
+    </div>
+  </header>
+
+  <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+  <main>
+    <section class="status-strip" aria-label="System status">
+      <div class="status-item"><span class="label">System</span><span id="st-system" class="value">&hellip;</span></div>
+      <div class="status-item"><span class="label">Database</span><span id="st-db" class="value">&hellip;</span></div>
+      <div class="status-item"><span class="label">Simulator</span><span id="st-sim" class="value">&hellip;</span></div>
+      <div class="status-item"><span class="label">Last reading</span><span id="st-last" class="value">&hellip;</span></div>
+      <div class="status-item"><span class="label">Historical data</span><span id="st-history" class="value">&hellip;</span></div>
+      <div class="status-item"><span class="label">Live updates</span><span id="st-live" class="value">&hellip;</span></div>
+      <div class="status-item"><span class="label">Dashboard refreshed</span><span id="st-refresh" class="value">&hellip;</span></div>
+    </section>
+
+    <section class="kpis" aria-label="Summary">
+      <div class="kpi"><span class="kpi-label">Total sensors</span><span id="kpi-total" class="kpi-value">&ndash;</span><span class="kpi-note">{% if demo %}defined in config.py{% else %}registered in the sensors table{% endif %}</span></div>
+      <div class="kpi"><span class="kpi-label">Active sensors</span><span id="kpi-active" class="kpi-value">&ndash;</span><span class="kpi-note">reported in the last 30 s</span></div>
+      <div class="kpi"><span class="kpi-label">Alerts today</span><span id="kpi-alerts" class="kpi-value">&ndash;</span><span class="kpi-note">since local midnight</span></div>
+      <div class="kpi"><span class="kpi-label">Readings stored</span><span id="kpi-readings" class="kpi-value">&ndash;</span><span class="kpi-note">{% if demo %}generated for the last 7 days{% else %}rows in the readings table{% endif %}</span></div>
+    </section>
+
+    <section id="cards" class="cards" aria-label="Current sensor readings">
+      <div class="card card-placeholder">Loading sensors&hellip;</div>
+      <div class="card card-placeholder">Loading sensors&hellip;</div>
+      <div class="card card-placeholder">Loading sensors&hellip;</div>
+    </section>
+
+    <section class="panel chart-panel" aria-label="Sensor history">
+      <div class="panel-head">
+        <div>
+          <h2 id="chart-title">Sensor history</h2>
+          <p id="chart-subtitle" class="muted">&nbsp;</p>
+        </div>
+        <div id="chart-legend" class="legend"></div>
+      </div>
+
+      <div class="controls">
+        <label class="field">Sensor
+          <select id="sensor"></select>
+        </label>
+        <div class="presets" role="group" aria-label="Time range">
+          <button type="button" class="btn" data-minutes="15">15 min</button>
+          <button type="button" class="btn" data-minutes="60">1 hour</button>
+          <button type="button" class="btn" data-minutes="360">6 hours</button>
+          <button type="button" class="btn active" data-minutes="1440">24 hours</button>
+          <button type="button" class="btn" data-minutes="10080">7 days</button>
+        </div>
+        <div class="custom">
+          <label class="field">From <input type="datetime-local" id="from"></label>
+          <label class="field">To <input type="datetime-local" id="to"></label>
+          <button type="button" id="apply" class="btn btn-primary">Apply</button>
+        </div>
+      </div>
+
+      <div class="chart-box">
+        <canvas id="chart" role="img" aria-label="Time-series line chart of the selected sensor"></canvas>
+        <div id="chart-overlay" class="chart-overlay">Loading data&hellip;</div>
+      </div>
+
+      <dl class="stats">
+        <div class="stat"><dt>Minimum</dt><dd id="stat-min">&ndash;</dd></div>
+        <div class="stat"><dt>Maximum</dt><dd id="stat-max">&ndash;</dd></div>
+        <div class="stat"><dt>Average</dt><dd id="stat-avg">&ndash;</dd></div>
+        <div class="stat"><dt>Readings</dt><dd id="stat-count">&ndash;</dd></div>
+      </dl>
+    </section>
+
+    <section class="grid-main">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent alerts</h2>
+          <span class="muted">{% if demo %}detected from the generated readings{% else %}from the alerts table{% endif %}</span>
+        </div>
+        <ul id="alerts" class="alert-list">
+          <li class="empty">Loading alerts&hellip;</li>
+        </ul>
+      </div>
+
+      <div class="side">
+        <div class="panel demo">
+          <h2>Demo mode</h2>
+          <p class="muted">Each button sends a real reading through <code>POST /api/readings</code>, the same path
+            a sensor uses: API &rarr; {% if demo %}demo data provider{% else %}SQLite{% endif %} &rarr; alert detection &rarr; dashboard.</p>
+          <div class="demo-buttons">
+            <button type="button" class="btn btn-demo demo-temp" data-sensor="TEMP-01" data-value="45">Trigger High Temperature <small>45 &deg;C</small></button>
+            <button type="button" class="btn btn-demo demo-hum" data-sensor="HUM-01" data-value="22">Trigger Low Humidity <small>22 %</small></button>
+            <button type="button" class="btn btn-demo demo-pres" data-sensor="PRES-01" data-value="985">Trigger Low Pressure <small>985 hPa</small></button>
+          </div>
+          <p id="demo-result" class="demo-result" aria-live="polite"></p>
+        </div>
+
+        <div class="panel">
+          <h2>{% if demo %}Data source{% else %}Database{% endif %}</h2>
+          <dl class="info-list">
+            <div><dt>Engine</dt><dd id="db-engine">SQLite</dd></div>
+            <div><dt>File</dt><dd id="db-file">&ndash;</dd></div>
+            <div><dt>Tables</dt><dd id="db-tables">&ndash;</dd></div>
+            <div><dt>Sensors</dt><dd id="db-sensors">&ndash;</dd></div>
+            <div><dt>Time-series records</dt><dd id="db-readings">&ndash;</dd></div>
+            <div><dt>Alerts stored</dt><dd id="db-alerts">&ndash;</dd></div>
+            <div><dt>Oldest reading</dt><dd id="db-first">&ndash;</dd></div>
+            <div><dt>Newest reading</dt><dd id="db-last">&ndash;</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Hourly statistics</h2>
+          <span class="muted">GROUP BY hour &middot; newest first</span>
+        </div>
+        <div class="table-box">
+          <table>
+            <thead><tr><th>Hour</th><th>Min</th><th>Max</th><th>Avg</th><th>Count</th></tr></thead>
+            <tbody id="hourly"><tr><td colspan="5" class="empty">Loading&hellip;</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent raw readings</h2>
+          <span class="muted">20 newest rows in the selected range</span>
+        </div>
+        <div class="table-box">
+          <table>
+            <thead><tr><th>Time</th><th>ID</th><th>Sensor</th><th>Type</th><th>Value</th><th>Unit</th><th>Status</th></tr></thead>
+            <tbody id="raw"><tr><td colspan="7" class="empty">Loading&hellip;</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>How the system works</h2>
+      <ol class="flow">
+        <li><strong>IoT Sensors</strong><small>TEMP-01 &middot; HUM-01 &middot; PRES-01 (simulated)</small></li>
+        {% if demo %}
+        <li><strong>Demo Data Provider</strong><small>data_provider.py &middot; values calculated from the timestamp</small></li>
+        <li><strong>Generated Time-Series Data</strong><small>7 days every 5 min + last hour every 5 s (no database file)</small></li>
+        {% else %}
+        <li><strong>Data Simulator</strong><small>simulator.py &middot; a reading every 5 s</small></li>
+        <li><strong>SQLite Time-Series Database</strong><small>data/iot.db &middot; sensors, readings, alerts</small></li>
+        {% endif %}
+        <li><strong>Flask REST API</strong><small>app.py &middot; /api/&hellip; JSON endpoints</small></li>
+        <li><strong>Monitoring Dashboard</strong><small>HTML &middot; CSS &middot; JavaScript &middot; Chart.js</small></li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>Time-Series Database for IoT Monitoring &middot; College mini-project &middot; Python, Flask, SQLite, Chart.js</footer>
+
+  <script src="{{ url_for('static', filename='js/chart.umd.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
